@@ -3,9 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <title>VSnapU Downloader</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <h1>VSnapU Downloader</h1>
-  <p>Scaffolding complete -- Task 8/9 fill in the real download engine and UI.</p>
+
+  <div id="idle-state">
+    <p>Waiting for a download link from the VSnapU website...</p>
+  </div>
+
+  <div id="job-state" hidden>
+    <h2 id="job-name"></h2>
+    <p id="folder-name"></p>
+    <p id="overall-progress-text">0%</p>
+    <progress id="overall-progress-bar" max="100" value="0"></progress>
+
+    <ul id="file-list"></ul>
+
+    <p id="error-message" class="error" hidden></p>
+  </div>
+
+  <script src="main.js"></script>
 </body>
 </html>

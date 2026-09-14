@@ -23,6 +23,11 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![fetch_manifest_command, download_all_command])
+        .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            app.deep_link().register("vsnapu-download")?;
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running the VSnapU Downloader application");
 }

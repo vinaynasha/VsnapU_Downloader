@@ -1,0 +1,19 @@
+body {
+  font-family: -apple-system, "Segoe UI", sans-serif;
+  padding: 16px;
+}
+
+.error {
+  color: #b00020;
+}
+
+#file-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+}
+
+#file-list progress {
+  width: 200px;
+}
