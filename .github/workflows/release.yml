@@ -18,6 +18,9 @@ name: Release
 # GitHub account, so being registered on vinaynasha/VsnapU does not make it available here too)
 # with at least the "self-hosted" and "Windows" labels -- see README.md for the exact steps.
 
+permissions:
+  contents: write # tauri-action needs this to create/update the draft release and upload assets
+
 on:
   workflow_dispatch: {}
   push:
@@ -31,8 +34,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # dtolnay/rust-toolchain (and most other Rust-setup actions) run their internal logic
+      # through `bash`, which GitHub-hosted Windows runners have pre-installed and on PATH (via
+      # Git Bash) but a bare self-hosted Windows runner typically does not -- installing here via
+      # PowerShell directly avoids that dependency entirely. Idempotent: skips the download if
+      # cargo is already on PATH (e.g. from a previous run, or a manual install on this server).
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        shell: pwsh
+        run: |
+          if (Get-Command cargo -ErrorAction SilentlyContinue) {
+            Write-Host "cargo already installed, skipping rustup-init."
+          } else {
+            Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile "rustup-init.exe"
+            .\rustup-init.exe -y --default-toolchain stable
+            Remove-Item "rustup-init.exe"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
 
       # No frontend build step: this app's UI (src/) is plain static HTML/CSS/vanilla JS with no
       # bundler and no npm dependency (Tauri's withGlobalTauri binding is used instead), so
