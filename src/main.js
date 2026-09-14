@@ -145,6 +145,18 @@ async function registerDeepLinkHandler() {
       }
     }
   });
+
+  // Handles the cold-start case: this process was launched directly with a vsnapu-download://
+  // URL as its argument (the app wasn't already running). Emitted once, at most, by the Rust
+  // side's .setup() hook via tauri-plugin-deep-link's get_current() -- NOT by the
+  // single-instance plugin's callback (that callback is intentionally empty; see lib.rs), so
+  // this cannot double-fire the way it did before that fix.
+  await event.listen('deep-link-url', (e) => {
+    const manifestUrl = extractManifestUrlFromDeepLink(e.payload);
+    if (manifestUrl) {
+      startDownload(manifestUrl);
+    }
+  });
 }
 
 registerDeepLinkHandler();
