@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VSnapU Downloader",
+  "version": "0.1.0",
+  "identifier": "com.vsnapu.downloader",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "VSnapU Downloader",
+        "width": 720,
+        "height": 560,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "dmg"],
+    "icon": []
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["vsnapu-download"]
+      }
+    },
+    "updater": {
+      "active": false,
+      "endpoints": [],
+      "dialog": true,
+      "pubkey": ""
+    }
+  }
+}
