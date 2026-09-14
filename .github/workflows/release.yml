@@ -40,11 +40,14 @@ jobs:
       # PowerShell directly avoids that dependency entirely. Idempotent: skips the download if
       # cargo is already on PATH (e.g. from a previous run, or a manual install on this server).
       - name: Install Rust
-        shell: pwsh
+        shell: powershell
         run: |
           if (Get-Command cargo -ErrorAction SilentlyContinue) {
             Write-Host "cargo already installed, skipping rustup-init."
           } else {
+            # Windows PowerShell 5.1's default SecurityProtocol can be TLS 1.0 on older .NET
+            # Framework versions, which win.rustup.rs (TLS 1.2+) will reject -- force it up front.
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile "rustup-init.exe"
             .\rustup-init.exe -y --default-toolchain stable
             Remove-Item "rustup-init.exe"
