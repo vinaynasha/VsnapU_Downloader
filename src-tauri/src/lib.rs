@@ -3,7 +3,7 @@ mod manifest;
 
 use manifest::Manifest;
 use std::path::PathBuf;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
 async fn fetch_manifest_command(manifest_url: String) -> Result<Manifest, String> {
@@ -18,6 +18,16 @@ async fn download_all_command(manifest: Manifest, destination_dir: String, app: 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // On Windows/Linux, a second app launch (e.g. clicking the download link again, or the
+            // OS launching a new process for a vsnapu-download:// URL) arrives here instead of via
+            // the deep-link plugin's onOpenUrl event (that event is macOS/iOS/Android-only -- see
+            // tauri-plugin-deep-link's own README). Forward any vsnapu-download:// URL found in the
+            // new instance's launch arguments to the frontend as a custom event.
+            if let Some(url) = argv.iter().find(|arg| arg.starts_with("vsnapu-download://")) {
+                let _ = app.emit("deep-link-url", url.clone());
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -35,6 +45,18 @@ pub fn run() {
             if let Err(e) = app.deep_link().register("vsnapu-download") {
                 eprintln!("Warning: failed to register the vsnapu-download:// URL scheme: {e}. The app will still start, but launching it via a download link may not work until this is resolved.");
             }
+
+            // Covers two cold-start cases the runtime onOpenUrl/single-instance-callback events
+            // above can miss: (1) macOS -- the deep-link plugin's own docs recommend calling
+            // get_current() on startup since onOpenUrl can fire before the frontend finishes
+            // loading; (2) Windows -- this very process (not a second instance) may itself have
+            // been launched directly with the URL as a CLI argument.
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                if let Some(url) = urls.first() {
+                    let _ = app.emit("deep-link-url", url.to_string());
+                }
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())

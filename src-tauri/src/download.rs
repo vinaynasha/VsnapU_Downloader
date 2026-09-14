@@ -162,7 +162,15 @@ fn emit_progress(app: &AppHandle, file_name: &str, bytes_downloaded: u64, total_
 }
 
 pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: AppHandle) -> Result<(), String> {
-    tokio::fs::create_dir_all(&destination_dir)
+    // Scope each job into its own subfolder so that two jobs downloaded into the same remembered
+    // destination directory can't collide on same-named files (e.g. "IMG_0001.jpg" is extremely
+    // common across separate photographer jobs).
+    let mut job_dir = destination_dir.join(sanitize_file_name(&manifest.job_name));
+    if let Some(folder_name) = &manifest.folder_name {
+        job_dir = job_dir.join(sanitize_file_name(folder_name));
+    }
+
+    tokio::fs::create_dir_all(&job_dir)
         .await
         .map_err(|e| format!("Could not create destination folder: {e}"))?;
 
@@ -173,12 +181,12 @@ pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: App
     for file in manifest.files {
         let permit_semaphore = Arc::clone(&semaphore);
         let client = client.clone();
-        let destination_dir = destination_dir.clone();
+        let job_dir = job_dir.clone();
         let app = app.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = permit_semaphore.acquire().await;
-            download_one_file(client, file, destination_dir, app).await
+            download_one_file(client, file, job_dir, app).await
         }));
     }
 

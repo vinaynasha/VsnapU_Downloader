@@ -20,6 +20,14 @@ Produces a `.msi` (Windows) or `.dmg` (Mac) under `src-tauri/target/release/bund
 on the host OS you build from. Builds are currently unsigned (see ARCHITECTURE.md) -- expect and
 accept the OS "unrecognized publisher" warning during this phase.
 
+**Note on the app icon:** `src-tauri/icons/icon.png` is currently a placeholder (a solid-color
+256x256 PNG), added only because Tauri's `generate_context!()` macro requires *some* icon file to
+exist at compile time. `tauri.conf.json`'s `bundle.icon` is intentionally left empty (`[]`) until
+real branding art exists. Before building a real installer for distribution, generate a proper
+icon set from real artwork with `cargo tauri icon <path-to-a-1024x1024-png>` (this produces the
+full `.ico`/`.icns`/PNG set Tauri's bundler needs) and populate `bundle.icon` with the generated
+paths -- otherwise the Windows MSI bundler in particular may fail or fall back to a default icon.
+
 ## Testing the protocol handler locally
 
 1. Build and install the app once (`cargo tauri build`, then run the produced installer) so the
