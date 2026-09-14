@@ -44,7 +44,7 @@ pub fn sanitize_file_name(name: &str) -> String {
     // regardless of which OS this app is running on.
     let candidate = name.rsplit(['/', '\\']).next().unwrap_or("").to_string();
 
-    if candidate.is_empty() {
+    if candidate.is_empty() || candidate == ".." || candidate == "." {
         "download".to_string()
     } else {
         candidate
@@ -89,6 +89,15 @@ async fn download_one_file(
 
     if !response.status().is_success() {
         let message = format!("Download failed for {safe_name}: HTTP {}", response.status());
+        emit_progress(&app, &safe_name, existing_bytes, file.size_bytes, true, Some(message.clone()));
+        return Err(message);
+    }
+
+    if start > 0 && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        let message = format!(
+            "Server did not honor the resume request for {safe_name} (expected 206 Partial Content, got {}). Delete the partial file and try again.",
+            response.status()
+        );
         emit_progress(&app, &safe_name, existing_bytes, file.size_bytes, true, Some(message.clone()));
         return Err(message);
     }
@@ -231,5 +240,15 @@ mod tests {
     #[test]
     fn sanitize_file_name_empty_input_returns_placeholder() {
         assert_eq!(sanitize_file_name(""), "download");
+    }
+
+    #[test]
+    fn sanitize_file_name_bare_dotdot_falls_back_to_placeholder() {
+        assert_eq!(sanitize_file_name(".."), "download");
+    }
+
+    #[test]
+    fn sanitize_file_name_bare_dot_falls_back_to_placeholder() {
+        assert_eq!(sanitize_file_name("."), "download");
     }
 }
