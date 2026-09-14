@@ -25,7 +25,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![fetch_manifest_command, download_all_command])
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
-            app.deep_link().register("vsnapu-download")?;
+            // Registering the vsnapu-download:// URL scheme can fail (e.g. "unsupported platform" for
+            // an unbundled dev/debug binary, or a signing/permission issue in a bundled release build).
+            // That failure must never crash the whole app -- deep-link handoff not being registered
+            // yet is a real but recoverable condition (the user can still open the app directly, and a
+            // packaged, signed release build is expected to register successfully), whereas a `?` here
+            // would propagate out of this Tauri `.setup()` hook and abort the entire process before any
+            // window ever opens, which is what actually happened on a real machine.
+            if let Err(e) = app.deep_link().register("vsnapu-download") {
+                eprintln!("Warning: failed to register the vsnapu-download:// URL scheme: {e}. The app will still start, but launching it via a download link may not work until this is resolved.");
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
