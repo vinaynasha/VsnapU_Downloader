@@ -1,0 +1,51 @@
+name: Release
+
+# Builds the VSnapU Downloader installer on both target platforms (Decision 2: Windows + Mac
+# only, see docs/superpowers/specs/2026-08-21-desktop-downloader-app-design.md in the VSnapU Apps
+# repo) and, on a version tag push, attaches both installers to a draft GitHub Release.
+#
+# Builds are unsigned (Decision 7 in that same spec: code signing / notarization are explicitly
+# deferred until after the app works end-to-end) -- expect OS "unrecognized publisher"/Gatekeeper
+# warnings on install, which is expected at this stage, not a workflow bug.
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust build cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      # No frontend build step: this app's UI (src/) is plain static HTML/CSS/vanilla JS with no
+      # bundler and no npm dependency (Tauri's withGlobalTauri binding is used instead), so
+      # tauri-action's frontend-build hooks are intentionally left unset below.
+      - name: Build and (on a version tag) release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "VSnapU Downloader v__VERSION__"
+          releaseBody: |
+            Unsigned build -- Windows/Mac will show an "unrecognized publisher"/Gatekeeper
+            warning on install. This is expected until code signing is set up.
+          releaseDraft: true
+          prerelease: false
