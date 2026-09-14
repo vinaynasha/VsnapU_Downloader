@@ -1,12 +1,22 @@
 name: Release
 
-# Builds the VSnapU Downloader installer on both target platforms (Decision 2: Windows + Mac
-# only, see docs/superpowers/specs/2026-08-21-desktop-downloader-app-design.md in the VSnapU Apps
-# repo) and, on a version tag push, attaches both installers to a draft GitHub Release.
+# Builds the VSnapU Downloader Windows installer (Decision 2 in
+# docs/superpowers/specs/2026-08-21-desktop-downloader-app-design.md, in the VSnapU Apps repo,
+# targets Windows + Mac) and, on a version tag push, attaches it to a draft GitHub Release.
+#
+# Windows only, on the self-hosted SERVER-vsnapu runner: GitHub-hosted macOS runners bill at a
+# 10x-minutes multiplier for private repos, and there's no self-hosted Mac runner available, so
+# the Mac build is done manually on a local Mac (`cargo tauri build` from src-tauri/) rather than
+# through this workflow. Revisit if a self-hosted Mac runner is ever added.
 #
 # Builds are unsigned (Decision 7 in that same spec: code signing / notarization are explicitly
-# deferred until after the app works end-to-end) -- expect OS "unrecognized publisher"/Gatekeeper
-# warnings on install, which is expected at this stage, not a workflow bug.
+# deferred until after the app works end-to-end) -- expect the "unrecognized publisher" warning
+# on install, which is expected at this stage, not a workflow bug.
+#
+# Prerequisite: SERVER-vsnapu (or another Windows machine) must be registered as a self-hosted
+# runner on THIS repo specifically (self-hosted runners are registered per-repo for a personal
+# GitHub account, so being registered on vinaynasha/VsnapU does not make it available here too)
+# with at least the "self-hosted" and "Windows" labels -- see README.md for the exact steps.
 
 on:
   workflow_dispatch: {}
@@ -16,23 +26,13 @@ on:
 
 jobs:
   release:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest, macos-latest]
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: [self-hosted, Windows]
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust build cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "src-tauri -> target"
 
       # No frontend build step: this app's UI (src/) is plain static HTML/CSS/vanilla JS with no
       # bundler and no npm dependency (Tauri's withGlobalTauri binding is used instead), so
@@ -45,7 +45,8 @@ jobs:
           tagName: v__VERSION__
           releaseName: "VSnapU Downloader v__VERSION__"
           releaseBody: |
-            Unsigned build -- Windows/Mac will show an "unrecognized publisher"/Gatekeeper
-            warning on install. This is expected until code signing is set up.
+            Unsigned build -- Windows will show an "unrecognized publisher" warning on install.
+            This is expected until code signing is set up. The Mac (.dmg) build for this version
+            is attached separately (built manually, not by this workflow).
           releaseDraft: true
           prerelease: false
