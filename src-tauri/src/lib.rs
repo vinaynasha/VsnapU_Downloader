@@ -18,15 +18,14 @@ async fn download_all_command(manifest: Manifest, destination_dir: String, app: 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // On Windows/Linux, a second app launch (e.g. clicking the download link again, or the
-            // OS launching a new process for a vsnapu-download:// URL) arrives here instead of via
-            // the deep-link plugin's onOpenUrl event (that event is macOS/iOS/Android-only -- see
-            // tauri-plugin-deep-link's own README). Forward any vsnapu-download:// URL found in the
-            // new instance's launch arguments to the frontend as a custom event.
-            if let Some(url) = argv.iter().find(|arg| arg.starts_with("vsnapu-download://")) {
-                let _ = app.emit("deep-link-url", url.clone());
-            }
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
+            // With the `deep-link` Cargo feature enabled (see Cargo.toml), this plugin automatically
+            // forwards a second instance's launch arguments into tauri-plugin-deep-link's
+            // handle_cli_arguments, which emits the same `deep-link://new-url` event the existing
+            // `onOpenUrl` listener in main.js already subscribes to -- no manual argv handling is
+            // needed (or wanted: doing so here previously caused the same URL to fire twice, once via
+            // this plugin's automatic forwarding and once via a redundant custom event, launching two
+            // concurrent downloads into the same job folder).
         }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())

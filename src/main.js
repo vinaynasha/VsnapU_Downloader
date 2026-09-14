@@ -145,15 +145,6 @@ async function registerDeepLinkHandler() {
       }
     }
   });
-
-  // Windows/Linux (and macOS cold-start) path: the Rust side emits this custom event instead
-  // of firing onOpenUrl, since onOpenUrl only fires at runtime on macOS/iOS/Android.
-  await event.listen('deep-link-url', (e) => {
-    const manifestUrl = extractManifestUrlFromDeepLink(e.payload);
-    if (manifestUrl) {
-      startDownload(manifestUrl);
-    }
-  });
 }
 
 registerDeepLinkHandler();
