@@ -124,6 +124,12 @@ function hasAnyFailures() {
   return false;
 }
 
+function describeQueuedJob(queuedJob) {
+  return queuedJob.manifest.folderName
+    ? `${queuedJob.manifest.jobName} (${queuedJob.manifest.folderName})`
+    : queuedJob.manifest.jobName;
+}
+
 function updateQueueStatus() {
   if (jobQueue.length === 0) {
     queueStatusEl.hidden = true;
@@ -131,9 +137,10 @@ function updateQueueStatus() {
   }
 
   queueStatusEl.hidden = false;
+  const names = jobQueue.map(describeQueuedJob).join(', ');
   queueStatusEl.textContent = hasAnyFailures()
-    ? `${jobQueue.length} job(s) waiting -- retry the failed files above to continue.`
-    : `${jobQueue.length} job(s) queued.`;
+    ? `Waiting to continue (retry the failed files above): ${names}`
+    : `Queued: ${names}`;
 }
 
 event.listen('download-progress', (e) => {
@@ -216,16 +223,23 @@ async function retryFailedDownloads() {
 
 retryFailedButton.addEventListener('click', retryFailedDownloads);
 
-async function runDownloadJob(manifestUrl) {
+async function runDownloadJob(manifestUrl, prefetchedManifest) {
   idleState.hidden = true;
   jobState.hidden = false;
   errorMessageEl.hidden = true;
 
-  try {
-    currentManifest = await core.invoke('fetch_manifest_command', { manifestUrl });
-  } catch (e) {
-    showError(`Could not load the file list: ${e}`);
-    return;
+  if (prefetchedManifest) {
+    // Already fetched when this job was queued (see startDownload), so its name could be shown
+    // in the queue status right away and its file-level download tokens are already resolved --
+    // no need to fetch the manifest link a second time.
+    currentManifest = prefetchedManifest;
+  } else {
+    try {
+      currentManifest = await core.invoke('fetch_manifest_command', { manifestUrl });
+    } catch (e) {
+      showError(`Could not load the file list: ${e}`);
+      return;
+    }
   }
 
   jobNameEl.textContent = currentManifest.jobName;
@@ -265,13 +279,23 @@ async function advanceQueueIfReady() {
 
   const next = jobQueue.shift();
   updateQueueStatus();
-  await runDownloadJob(next);
+  await runDownloadJob(next.manifestUrl, next.manifest);
   await advanceQueueIfReady();
 }
 
 async function startDownload(manifestUrl) {
   if (isDownloading) {
-    jobQueue.push(manifestUrl);
+    // Fetch the manifest now (not when this job's turn eventually comes) so its name can be
+    // shown in the queue status right away, and so its file-level tokens are resolved up front
+    // rather than only once the job actually starts downloading.
+    let manifest;
+    try {
+      manifest = await core.invoke('fetch_manifest_command', { manifestUrl });
+    } catch (e) {
+      showError(`Could not load the file list for a queued job: ${e}`);
+      return;
+    }
+    jobQueue.push({ manifestUrl, manifest });
     updateQueueStatus();
     return;
   }
