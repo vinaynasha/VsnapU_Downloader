@@ -17,3 +17,18 @@ body {
 #file-list progress {
   width: 200px;
 }
+
+#progress-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#progress-summary p {
+  margin: 0;
+}
+
+#retry-failed-button {
+  margin-left: auto;
+}

@@ -73,6 +73,15 @@ async fn download_one_file(
     }
 
     let (start, end) = range.unwrap();
+
+    // Report the true resumed starting point immediately, before any network I/O. The JS side
+    // resets every file's tracked progress to 0 at the start of each download_all invocation
+    // (including a retry/resume), so without this, a file that's already partially downloaded
+    // would appear to sit at 0% -- dragging the overall percentage down -- until its first
+    // network chunk actually arrives. That produced a visible dip-then-climb in the overall bar
+    // right after a resume; emitting this immediately keeps the UI honest from the first instant.
+    emit_progress(&app, &safe_name, start, file.size_bytes, false, None);
+
     let mut request = client.get(&file.url);
     if start > 0 {
         request = request.header("Range", format!("bytes={start}-{end}"));

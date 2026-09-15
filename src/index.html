@@ -15,7 +15,12 @@
   <div id="job-state" hidden>
     <h2 id="job-name"></h2>
     <p id="folder-name"></p>
-    <p id="overall-progress-text">0%</p>
+
+    <div id="progress-summary">
+      <p id="overall-progress-text">0%</p>
+      <p id="file-count-text">0 of 0 files</p>
+      <button id="retry-failed-button" hidden>Retry Failed Downloads</button>
+    </div>
     <progress id="overall-progress-bar" max="100" value="0"></progress>
 
     <ul id="file-list"></ul>
