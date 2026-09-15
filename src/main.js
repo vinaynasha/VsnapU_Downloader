@@ -11,6 +11,8 @@ const retryFailedButton = document.getElementById('retry-failed-button');
 const fileListEl = document.getElementById('file-list');
 const errorMessageEl = document.getElementById('error-message');
 const queueStatusEl = document.getElementById('queue-status');
+const queueStatusTextEl = document.getElementById('queue-status-text');
+const queueListEl = document.getElementById('queue-list');
 
 const DESTINATION_STORE_KEY = 'destinationDir';
 let destinationStore = null;
@@ -137,10 +139,16 @@ function updateQueueStatus() {
   }
 
   queueStatusEl.hidden = false;
-  const names = jobQueue.map(describeQueuedJob).join(', ');
-  queueStatusEl.textContent = hasAnyFailures()
-    ? `Waiting to continue (retry the failed files above): ${names}`
-    : `Queued: ${names}`;
+  queueStatusTextEl.textContent = hasAnyFailures()
+    ? 'Waiting to continue (retry the failed files above) -- next up:'
+    : 'Queued, in order:';
+
+  queueListEl.replaceChildren();
+  for (const queuedJob of jobQueue) {
+    const li = document.createElement('li');
+    li.textContent = describeQueuedJob(queuedJob);
+    queueListEl.appendChild(li);
+  }
 }
 
 event.listen('download-progress', (e) => {
@@ -213,9 +221,28 @@ async function retryFailedDownloads() {
 
   try {
     await core.invoke('download_all_command', { manifest: retryManifest, destinationDir });
+    // download_all_command only resolves (rather than rejecting) once every file in this retry
+    // batch has actually succeeded -- treat that as the authoritative outcome and finalize each
+    // retried file's state explicitly, rather than relying solely on this batch's individual
+    // download-progress events having each been received and processed. This is the fix for a
+    // real bug found in testing: the on-disk files were correctly downloaded, but the "N of M
+    // files" count never advanced for them, suggesting their final progress events weren't
+    // reliably reflected in fileProgressByName by the time the invoke settled.
+    for (const file of failedFiles) {
+      const entry = fileProgressByName.get(file.fileName);
+      if (entry) {
+        entry.done = true;
+        entry.failed = false;
+        entry.downloadedBytes = entry.totalBytes;
+        entry.element.value = entry.totalBytes;
+      }
+    }
   } catch (e) {
     showError(`Retry finished with an error: ${e}`);
   }
+
+  updateOverallProgress();
+  updateFileCountAndRetryUi();
 
   // A successful retry may have just cleared the last failure blocking the queue -- check.
   await advanceQueueIfReady();
@@ -256,9 +283,21 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
 
   try {
     await core.invoke('download_all_command', { manifest: currentManifest, destinationDir });
+    // Same authoritative-finalization backstop as retryFailedDownloads: a successful invoke
+    // means every file in the manifest succeeded, so finalize them all explicitly rather than
+    // depending solely on each file's own download-progress events having landed.
+    for (const entry of fileProgressByName.values()) {
+      entry.done = true;
+      entry.failed = false;
+      entry.downloadedBytes = entry.totalBytes;
+      entry.element.value = entry.totalBytes;
+    }
   } catch (e) {
     showError(`Download finished with an error: ${e}`);
   }
+
+  updateOverallProgress();
+  updateFileCountAndRetryUi();
 }
 
 // Called once the currently-displayed job has settled (finished, errored, or just been retried).

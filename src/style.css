@@ -9,7 +9,16 @@ body {
 
 .queue-status {
   color: #555;
+}
+
+#queue-status-text {
   font-style: italic;
+  margin: 0 0 4px 0;
+}
+
+#queue-list {
+  margin: 0;
+  padding-left: 20px;
 }
 
 #file-list li {
