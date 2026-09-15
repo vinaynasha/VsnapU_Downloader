@@ -7,6 +7,11 @@ body {
   color: #b00020;
 }
 
+.queue-status {
+  color: #555;
+  font-style: italic;
+}
+
 #file-list li {
   display: flex;
   justify-content: space-between;

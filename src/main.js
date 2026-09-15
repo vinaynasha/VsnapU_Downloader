@@ -10,11 +10,20 @@ const fileCountText = document.getElementById('file-count-text');
 const retryFailedButton = document.getElementById('retry-failed-button');
 const fileListEl = document.getElementById('file-list');
 const errorMessageEl = document.getElementById('error-message');
+const queueStatusEl = document.getElementById('queue-status');
 
 const DESTINATION_STORE_KEY = 'destinationDir';
 let destinationStore = null;
 let currentManifest = null;
 let fileProgressByName = new Map();
+
+// Only one job's downloads run at a time. A "Download with App" click that arrives while
+// isDownloading is true gets queued instead of overwriting the currently-shown job's manifest
+// and progress tracking (which used to silently orphan the in-progress job -- its downloads kept
+// running in the background, but the UI dropped all its progress events since fileProgressByName
+// had already been rebuilt for the new job).
+let isDownloading = false;
+let jobQueue = [];
 
 async function getDestinationStore() {
   if (!destinationStore) {
@@ -106,6 +115,27 @@ function updateFileCountAndRetryUi() {
   retryFailedButton.hidden = failed === 0;
 }
 
+function hasAnyFailures() {
+  for (const entry of fileProgressByName.values()) {
+    if (entry.failed) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function updateQueueStatus() {
+  if (jobQueue.length === 0) {
+    queueStatusEl.hidden = true;
+    return;
+  }
+
+  queueStatusEl.hidden = false;
+  queueStatusEl.textContent = hasAnyFailures()
+    ? `${jobQueue.length} job(s) waiting -- retry the failed files above to continue.`
+    : `${jobQueue.length} job(s) queued.`;
+}
+
 event.listen('download-progress', (e) => {
   const { fileName, bytesDownloaded, totalBytes, done, error } = e.payload;
   const entry = fileProgressByName.get(fileName);
@@ -179,11 +209,14 @@ async function retryFailedDownloads() {
   } catch (e) {
     showError(`Retry finished with an error: ${e}`);
   }
+
+  // A successful retry may have just cleared the last failure blocking the queue -- check.
+  await advanceQueueIfReady();
 }
 
 retryFailedButton.addEventListener('click', retryFailedDownloads);
 
-async function startDownload(manifestUrl) {
+async function runDownloadJob(manifestUrl) {
   idleState.hidden = true;
   jobState.hidden = false;
   errorMessageEl.hidden = true;
@@ -212,6 +245,40 @@ async function startDownload(manifestUrl) {
   } catch (e) {
     showError(`Download finished with an error: ${e}`);
   }
+}
+
+// Called once the currently-displayed job has settled (finished, errored, or just been retried).
+// Moves on to the next queued job only if nothing about the current job still needs attention --
+// if it has any failed files, the queue stays paused so a "Retry Failed Downloads" click doesn't
+// get raced by the next job silently taking over the UI first.
+async function advanceQueueIfReady() {
+  if (hasAnyFailures()) {
+    updateQueueStatus();
+    return;
+  }
+
+  if (jobQueue.length === 0) {
+    isDownloading = false;
+    updateQueueStatus();
+    return;
+  }
+
+  const next = jobQueue.shift();
+  updateQueueStatus();
+  await runDownloadJob(next);
+  await advanceQueueIfReady();
+}
+
+async function startDownload(manifestUrl) {
+  if (isDownloading) {
+    jobQueue.push(manifestUrl);
+    updateQueueStatus();
+    return;
+  }
+
+  isDownloading = true;
+  await runDownloadJob(manifestUrl);
+  await advanceQueueIfReady();
 }
 
 function extractManifestUrlFromDeepLink(url) {
