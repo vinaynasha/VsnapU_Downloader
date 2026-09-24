@@ -46,3 +46,17 @@ body {
 #retry-failed-button {
   margin-left: auto;
 }
+
+#editor-session-area {
+  margin-top: 1.5rem;
+  font-size: 0.9rem;
+}
+
+#editor-login-form {
+  margin-top: 0.5rem;
+}
+
+#editor-login-form input {
+  display: block;
+  margin-bottom: 0.5rem;
+}

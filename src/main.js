@@ -13,6 +13,18 @@ const errorMessageEl = document.getElementById('error-message');
 const queueStatusEl = document.getElementById('queue-status');
 const queueStatusTextEl = document.getElementById('queue-status-text');
 const queueListEl = document.getElementById('queue-list');
+const editorLoginLink = document.getElementById('editor-login-link');
+const editorLoginForm = document.getElementById('editor-login-form');
+const editorMobileInput = document.getElementById('editor-mobile-input');
+const editorPasswordInput = document.getElementById('editor-password-input');
+const editorLoginCancel = document.getElementById('editor-login-cancel');
+const editorLoginError = document.getElementById('editor-login-error');
+const editorLoggedInState = document.getElementById('editor-logged-in-state');
+const editorNameEl = document.getElementById('editor-name');
+const editorRoleEl = document.getElementById('editor-role');
+const editorLogoutLink = document.getElementById('editor-logout-link');
+
+let currentEditorSession = null; // { photographerId, name, role, accessToken } or null when logged out
 
 const DESTINATION_STORE_KEY = 'destinationDir';
 let destinationStore = null;
@@ -220,7 +232,11 @@ async function retryFailedDownloads() {
   };
 
   try {
-    await core.invoke('download_all_command', { manifest: retryManifest, destinationDir });
+    await core.invoke('download_all_command', {
+      manifest: retryManifest,
+      destinationDir,
+      accessToken: currentEditorSession?.accessToken ?? null
+    });
     // download_all_command only resolves (rather than rejecting) once every file in this retry
     // batch has actually succeeded -- treat that as the authoritative outcome and finalize each
     // retried file's state explicitly, rather than relying solely on this batch's individual
@@ -262,7 +278,10 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
     currentManifest = prefetchedManifest;
   } else {
     try {
-      currentManifest = await core.invoke('fetch_manifest_command', { manifestUrl });
+      currentManifest = await core.invoke('fetch_manifest_command', {
+        manifestUrl,
+        accessToken: currentEditorSession?.accessToken ?? null
+      });
     } catch (e) {
       showError(`Could not load the file list: ${e}`);
       return;
@@ -282,7 +301,11 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
   }
 
   try {
-    await core.invoke('download_all_command', { manifest: currentManifest, destinationDir });
+    await core.invoke('download_all_command', {
+      manifest: currentManifest,
+      destinationDir,
+      accessToken: currentEditorSession?.accessToken ?? null
+    });
     // Same authoritative-finalization backstop as retryFailedDownloads: a successful invoke
     // means every file in the manifest succeeded, so finalize them all explicitly rather than
     // depending solely on each file's own download-progress events having landed.
@@ -329,7 +352,10 @@ async function startDownload(manifestUrl) {
     // rather than only once the job actually starts downloading.
     let manifest;
     try {
-      manifest = await core.invoke('fetch_manifest_command', { manifestUrl });
+      manifest = await core.invoke('fetch_manifest_command', {
+      manifestUrl,
+      accessToken: currentEditorSession?.accessToken ?? null
+    });
     } catch (e) {
       showError(`Could not load the file list for a queued job: ${e}`);
       return;
@@ -375,5 +401,84 @@ async function registerDeepLinkHandler() {
     }
   });
 }
+
+function showLoggedOutState() {
+  currentEditorSession = null;
+  editorLoginLink.hidden = false;
+  editorLoginForm.hidden = true;
+  editorLoggedInState.hidden = true;
+}
+
+function showLoggedInState(session) {
+  currentEditorSession = session;
+  editorLoginLink.hidden = true;
+  editorLoginForm.hidden = true;
+  editorLoggedInState.hidden = false;
+  editorNameEl.textContent = session.name || '';
+  editorRoleEl.textContent = session.role || '';
+}
+
+editorLoginLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  editorLoginError.hidden = true;
+  editorLoginLink.hidden = true;
+  editorLoginForm.hidden = false;
+});
+
+editorLoginCancel.addEventListener('click', () => {
+  editorLoginForm.hidden = true;
+  editorLoginLink.hidden = false;
+});
+
+editorLoginForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  editorLoginError.hidden = true;
+
+  try {
+    const session = await core.invoke('editor_login_command', {
+      mobile: editorMobileInput.value,
+      password: editorPasswordInput.value
+    });
+    editorPasswordInput.value = '';
+    showLoggedInState(session);
+  } catch (err) {
+    editorLoginError.textContent = String(err);
+    editorLoginError.hidden = false;
+  }
+});
+
+editorLogoutLink.addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    await core.invoke('editor_logout_command');
+  } catch (err) {
+    // Best-effort server-side clear (see editor_session::logout) -- local state is cleared
+    // either way, so a network error here is not shown to the user.
+  }
+  showLoggedOutState();
+});
+
+async function restoreEditorSessionIfAny() {
+  try {
+    const session = await core.invoke('editor_refresh_command');
+    if (session) {
+      // Name/role aren't returned by a silent refresh (see editor_session::refresh) -- keep
+      // whatever was already displayed if this is a re-refresh, otherwise show a generic label
+      // until the next full login.
+      showLoggedInState({
+        name: currentEditorSession?.name || session.photographerId,
+        role: currentEditorSession?.role || '',
+        photographerId: session.photographerId,
+        accessToken: session.accessToken
+      });
+    } else {
+      showLoggedOutState();
+    }
+  } catch (err) {
+    showLoggedOutState();
+  }
+}
+
+restoreEditorSessionIfAny();
 
 registerDeepLinkHandler();

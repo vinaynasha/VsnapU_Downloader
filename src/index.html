@@ -12,6 +12,23 @@
     <p>Waiting for a download link from the VSnapU website...</p>
   </div>
 
+  <div id="editor-session-area">
+    <a href="#" id="editor-login-link">Are you a registered editor? Login</a>
+
+    <form id="editor-login-form" hidden>
+      <input type="tel" id="editor-mobile-input" placeholder="Mobile number" autocomplete="username" />
+      <input type="password" id="editor-password-input" placeholder="Password" autocomplete="current-password" />
+      <button type="submit" id="editor-login-submit">Login</button>
+      <button type="button" id="editor-login-cancel">Cancel</button>
+      <p id="editor-login-error" class="error" hidden></p>
+    </form>
+
+    <p id="editor-logged-in-state" hidden>
+      Logged in as <span id="editor-name"></span> (<span id="editor-role"></span>)
+      -- <a href="#" id="editor-logout-link">Log out</a>
+    </p>
+  </div>
+
   <div id="job-state" hidden>
     <h2 id="job-name"></h2>
     <p id="folder-name"></p>
