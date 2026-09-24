@@ -1,9 +1,10 @@
 mod download;
+mod editor_session;
 mod manifest;
 
 use manifest::Manifest;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
 async fn fetch_manifest_command(manifest_url: String) -> Result<Manifest, String> {
@@ -13,6 +14,24 @@ async fn fetch_manifest_command(manifest_url: String) -> Result<Manifest, String
 #[tauri::command]
 async fn download_all_command(manifest: Manifest, destination_dir: String, app: AppHandle) -> Result<(), String> {
     download::download_all(manifest, PathBuf::from(destination_dir), app).await
+}
+
+#[tauri::command]
+async fn editor_login_command(mobile: String, password: String, app: AppHandle) -> Result<editor_session::EditorSession, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("Could not resolve app data directory: {e}"))?;
+    editor_session::login(&app_data_dir, &mobile, &password).await
+}
+
+#[tauri::command]
+async fn editor_refresh_command(app: AppHandle) -> Result<Option<editor_session::EditorSession>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("Could not resolve app data directory: {e}"))?;
+    editor_session::refresh(&app_data_dir).await
+}
+
+#[tauri::command]
+async fn editor_logout_command(app: AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("Could not resolve app data directory: {e}"))?;
+    editor_session::logout(&app_data_dir).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,7 +50,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![fetch_manifest_command, download_all_command])
+        .invoke_handler(tauri::generate_handler![
+            fetch_manifest_command,
+            download_all_command,
+            editor_login_command,
+            editor_refresh_command,
+            editor_logout_command
+        ])
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
             // Registering the vsnapu-download:// URL scheme can fail (e.g. "unsupported platform" for
