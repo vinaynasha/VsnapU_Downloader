@@ -38,7 +38,7 @@ struct LoginRequestBody {
 #[derive(Deserialize)]
 struct LoginResponseBody {
     role: String,
-    name: String,
+    name: Option<String>,
     #[serde(rename = "photographerId")]
     photographer_id: String,
     token: Option<String>,
@@ -86,6 +86,21 @@ fn clear_stored_refresh_state(app_data_dir: &PathBuf) {
     let _ = std::fs::remove_file(session_file_path(app_data_dir));
 }
 
+/// The backend returns login failures as a plain string body (ASP.NET `Unauthorized("...")`), which
+/// arrives as a JSON string; surface that message, else a non-JSON-object raw body, else a fixed fallback.
+fn extract_login_error(status: &str, body: &str) -> String {
+    if let Ok(message) = serde_json::from_str::<String>(body) {
+        if !message.trim().is_empty() {
+            return message;
+        }
+    }
+    let raw = body.trim();
+    if !raw.is_empty() && !raw.starts_with('{') && !raw.starts_with('[') {
+        return raw.to_string();
+    }
+    format!("Login failed (HTTP {status}). Check your mobile number and password.")
+}
+
 /// Only "Editor" and "VideoEditor" logins are eligible for the desktop bypass -- a "Photographer"
 /// account can still log in (same endpoint, same credentials check) but never receives a
 /// desktopRefreshToken from the backend, so login for that role is rejected here rather than
@@ -100,7 +115,9 @@ pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Resu
         .map_err(|e| format!("Could not reach the login server: {e}"))?;
 
     if !response.status().is_success() {
-        return Err(format!("Login failed (HTTP {}). Check your mobile number and password.", response.status()));
+        let status = response.status().to_string();
+        let body = response.text().await.unwrap_or_default();
+        return Err(extract_login_error(&status, &body));
     }
 
     let body: LoginResponseBody = response
@@ -123,7 +140,7 @@ pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Resu
 
     Ok(EditorSession {
         photographer_id: body.photographer_id,
-        name: body.name,
+        name: body.name.unwrap_or_default(),
         role: body.role,
         access_token,
     })
@@ -151,8 +168,12 @@ pub async fn refresh(app_data_dir: &PathBuf) -> Result<Option<EditorSession>, St
         .map_err(|e| format!("Could not reach the login server: {e}"))?;
 
     if !response.status().is_success() {
-        clear_stored_refresh_state(app_data_dir);
-        return Err("Your editor session has expired. Please log in again.".to_string());
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            clear_stored_refresh_state(app_data_dir);
+            return Err("Your editor session has expired. Please log in again.".to_string());
+        }
+        return Err(format!("Could not refresh your editor session right now (HTTP {status}). Try again in a moment."));
     }
 
     let body: RefreshResponseBody = response
@@ -222,5 +243,29 @@ mod tests {
         let parsed: StoredRefreshState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.photographer_id, "EDITOR-1");
         assert_eq!(parsed.refresh_token, "some-refresh-token");
+    }
+
+    #[test]
+    fn login_response_accepts_null_name() {
+        let json = r#"{"role":"Editor","name":null,"photographerId":"E1","token":"t","desktopRefreshToken":"r"}"#;
+        let body: LoginResponseBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.name.unwrap_or_default(), "");
+    }
+
+    #[test]
+    fn extract_login_error_uses_json_string_body() {
+        assert_eq!(extract_login_error("401 Unauthorized", "\"Invalid password.\""), "Invalid password.");
+    }
+
+    #[test]
+    fn extract_login_error_uses_plain_body() {
+        assert_eq!(extract_login_error("400 Bad Request", "  Password not set.  "), "Password not set.");
+    }
+
+    #[test]
+    fn extract_login_error_falls_back_on_empty_or_object_body() {
+        let expected = "Login failed (HTTP 500 Internal Server Error). Check your mobile number and password.";
+        assert_eq!(extract_login_error("500 Internal Server Error", ""), expected);
+        assert_eq!(extract_login_error("500 Internal Server Error", "{\"title\":\"x\"}"), expected);
     }
 }
