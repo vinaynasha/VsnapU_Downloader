@@ -191,84 +191,98 @@ event.listen('download-progress', (e) => {
   updateFileCountAndRetryUi();
 });
 
+let isRetrying = false;
+
 async function retryFailedDownloads() {
-  await ensureEditorSessionFresh();
-  if (!currentManifest) {
+  if (isRetrying) {
     return;
   }
-
-  const failedFiles = currentManifest.files.filter((file) => {
-    const entry = fileProgressByName.get(file.fileName);
-    return entry && entry.failed;
-  });
-
-  if (failedFiles.length === 0) {
-    return;
-  }
-
+  isRetrying = true;
+  // Hide before the first await so a double-click during a session refresh can't start a second retry.
   errorMessageEl.hidden = true;
   retryFailedButton.hidden = true;
 
-  // Clear each retried file's failed/done state up front so the counts and progress bars reflect
-  // "in progress again" immediately, rather than still showing the old failure until the first
-  // new progress event arrives for that file.
-  for (const file of failedFiles) {
-    const entry = fileProgressByName.get(file.fileName);
-    if (entry) {
-      entry.failed = false;
-      entry.done = false;
+  try {
+    await ensureEditorSessionFresh();
+    if (!currentManifest) {
+      updateFileCountAndRetryUi();
+      return;
     }
-  }
-  updateFileCountAndRetryUi();
 
-  let destinationDir;
-  try {
-    destinationDir = await resolveDestinationDir();
-  } catch (e) {
-    showError(String(e));
-    return;
-  }
-
-  // A manifest containing only the failed files, scoped to the same job/folder so it lands in
-  // the same destination directory the original download used -- already-complete files are
-  // simply left alone since they're not part of this retry manifest at all.
-  const retryManifest = {
-    jobName: currentManifest.jobName,
-    folderName: currentManifest.folderName,
-    files: failedFiles
-  };
-
-  try {
-    await core.invoke('download_all_command', {
-      manifest: retryManifest,
-      destinationDir,
-      accessToken: currentEditorSession?.accessToken ?? null
+    const failedFiles = currentManifest.files.filter((file) => {
+      const entry = fileProgressByName.get(file.fileName);
+      return entry && entry.failed;
     });
-    // download_all_command only resolves (rather than rejecting) once every file in this retry
-    // batch has actually succeeded -- treat that as the authoritative outcome and finalize each
-    // retried file's state explicitly, rather than relying solely on this batch's individual
-    // download-progress events having each been received and processed. This is the fix for a
-    // real bug found in testing: the on-disk files were correctly downloaded, but the "N of M
-    // files" count never advanced for them, suggesting their final progress events weren't
-    // reliably reflected in fileProgressByName by the time the invoke settled.
+
+    if (failedFiles.length === 0) {
+      updateFileCountAndRetryUi();
+      return;
+    }
+
+    // Clear each retried file's failed/done state up front so the counts and progress bars reflect
+    // "in progress again" immediately, rather than still showing the old failure until the first
+    // new progress event arrives for that file.
     for (const file of failedFiles) {
       const entry = fileProgressByName.get(file.fileName);
       if (entry) {
-        entry.done = true;
         entry.failed = false;
-        entry.downloadedBytes = entry.totalBytes;
-        entry.element.value = entry.totalBytes;
+        entry.done = false;
       }
     }
-  } catch (e) {
-    showError(`Retry finished with an error: ${e}`);
+    updateFileCountAndRetryUi();
+
+    let destinationDir;
+    try {
+      destinationDir = await resolveDestinationDir();
+    } catch (e) {
+      showError(String(e));
+      updateFileCountAndRetryUi();
+      return;
+    }
+
+    // A manifest containing only the failed files, scoped to the same job/folder so it lands in
+    // the same destination directory the original download used -- already-complete files are
+    // simply left alone since they're not part of this retry manifest at all.
+    const retryManifest = {
+      jobName: currentManifest.jobName,
+      folderName: currentManifest.folderName,
+      files: failedFiles
+    };
+
+    try {
+      await core.invoke('download_all_command', {
+        manifest: retryManifest,
+        destinationDir,
+        accessToken: currentEditorSession?.accessToken ?? null
+      });
+      // download_all_command only resolves (rather than rejecting) once every file in this retry
+      // batch has actually succeeded -- treat that as the authoritative outcome and finalize each
+      // retried file's state explicitly, rather than relying solely on this batch's individual
+      // download-progress events having each been received and processed. This is the fix for a
+      // real bug found in testing: the on-disk files were correctly downloaded, but the "N of M
+      // files" count never advanced for them, suggesting their final progress events weren't
+      // reliably reflected in fileProgressByName by the time the invoke settled.
+      for (const file of failedFiles) {
+        const entry = fileProgressByName.get(file.fileName);
+        if (entry) {
+          entry.done = true;
+          entry.failed = false;
+          entry.downloadedBytes = entry.totalBytes;
+          entry.element.value = entry.totalBytes;
+        }
+      }
+    } catch (e) {
+      showError(`Retry finished with an error: ${e}`);
+    }
+
+    updateOverallProgress();
+    updateFileCountAndRetryUi();
+
+    // A successful retry may have just cleared the last failure blocking the queue -- check.
+    await advanceQueueIfReady();
+  } finally {
+    isRetrying = false;
   }
-
-  updateOverallProgress();
-  updateFileCountAndRetryUi();
-
-  // A successful retry may have just cleared the last failure blocking the queue -- check.
-  await advanceQueueIfReady();
 }
 
 retryFailedButton.addEventListener('click', retryFailedDownloads);
