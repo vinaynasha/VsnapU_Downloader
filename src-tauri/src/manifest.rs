@@ -36,8 +36,23 @@ fn extract_error_message(status: &str, body: &str) -> String {
     format!("Manifest link rejected ({status}). It may have expired -- try downloading again from the web page.")
 }
 
-pub async fn fetch_manifest(manifest_url: &str) -> Result<Manifest, String> {
-    let response = reqwest::get(manifest_url)
+/// True only for URLs on our own API host. An Authorization header must never be attached to a
+/// GCS-signed URL: GCS rejects unexpected auth headers (and it would leak the editor token).
+pub(crate) fn should_attach_auth_header(url: &str) -> bool {
+    url.starts_with("https://apis.vsnapu.com/")
+}
+
+pub async fn fetch_manifest(manifest_url: &str, access_token: Option<&str>) -> Result<Manifest, String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(manifest_url);
+    if let Some(token) = access_token {
+        if should_attach_auth_header(manifest_url) {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+    }
+
+    let response = request
+        .send()
         .await
         .map_err(|e| format!("Failed to reach the manifest link: {e}"))?;
 
@@ -82,5 +97,20 @@ mod tests {
             extract_error_message("HTTP 500", body),
             "Manifest link rejected (HTTP 500). It may have expired -- try downloading again from the web page."
         );
+    }
+
+    #[test]
+    fn should_attach_auth_header_for_own_api_host() {
+        assert!(should_attach_auth_header("https://apis.vsnapu.com/api/DirectDownload/Manifest?token=abc"));
+    }
+
+    #[test]
+    fn should_attach_auth_header_false_for_external_host() {
+        assert!(!should_attach_auth_header("https://storage.googleapis.com/some-bucket/some-object?X-Goog-Signature=abc"));
+    }
+
+    #[test]
+    fn should_attach_auth_header_false_for_malformed_url() {
+        assert!(!should_attach_auth_header("not-a-url"));
     }
 }

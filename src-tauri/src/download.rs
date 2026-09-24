@@ -56,6 +56,7 @@ async fn download_one_file(
     file: ManifestFile,
     destination_dir: PathBuf,
     app: AppHandle,
+    access_token: Option<String>,
 ) -> Result<(), String> {
     let safe_name = sanitize_file_name(&file.file_name);
     let destination_path = destination_dir.join(&safe_name);
@@ -85,6 +86,11 @@ async fn download_one_file(
     let mut request = client.get(&file.url);
     if start > 0 {
         request = request.header("Range", format!("bytes={start}-{end}"));
+    }
+    if let Some(token) = &access_token {
+        if crate::manifest::should_attach_auth_header(&file.url) {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
     }
 
     let response = match request.send().await {
@@ -170,7 +176,7 @@ fn emit_progress(app: &AppHandle, file_name: &str, bytes_downloaded: u64, total_
     );
 }
 
-pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: AppHandle) -> Result<(), String> {
+pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: AppHandle, access_token: Option<String>) -> Result<(), String> {
     // Scope each job into its own subfolder so that two jobs downloaded into the same remembered
     // destination directory can't collide on same-named files (e.g. "IMG_0001.jpg" is extremely
     // common across separate photographer jobs).
@@ -192,10 +198,11 @@ pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: App
         let client = client.clone();
         let job_dir = job_dir.clone();
         let app = app.clone();
+        let access_token = access_token.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = permit_semaphore.acquire().await;
-            download_one_file(client, file, job_dir, app).await
+            download_one_file(client, file, job_dir, app, access_token).await
         }));
     }
 

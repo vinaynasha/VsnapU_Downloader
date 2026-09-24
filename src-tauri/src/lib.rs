@@ -7,13 +7,13 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[tauri::command]
-async fn fetch_manifest_command(manifest_url: String) -> Result<Manifest, String> {
-    manifest::fetch_manifest(&manifest_url).await
+async fn fetch_manifest_command(manifest_url: String, access_token: Option<String>) -> Result<Manifest, String> {
+    manifest::fetch_manifest(&manifest_url, access_token.as_deref()).await
 }
 
 #[tauri::command]
-async fn download_all_command(manifest: Manifest, destination_dir: String, app: AppHandle) -> Result<(), String> {
-    download::download_all(manifest, PathBuf::from(destination_dir), app).await
+async fn download_all_command(manifest: Manifest, destination_dir: String, access_token: Option<String>, app: AppHandle) -> Result<(), String> {
+    download::download_all(manifest, PathBuf::from(destination_dir), app, access_token).await
 }
 
 #[tauri::command]
