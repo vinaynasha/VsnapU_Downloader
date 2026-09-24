@@ -51,6 +51,12 @@ pub fn sanitize_file_name(name: &str) -> String {
     }
 }
 
+/// Backend `{ "message": ... }` when present (e.g. the payment-lock text), else the plain HTTP-status text.
+fn file_failure_message(safe_name: &str, status: &str, body: &str) -> String {
+    crate::manifest::parse_error_message(body)
+        .unwrap_or_else(|| format!("Download failed for {safe_name}: HTTP {status}"))
+}
+
 async fn download_one_file(
     client: reqwest::Client,
     file: ManifestFile,
@@ -103,7 +109,9 @@ async fn download_one_file(
     };
 
     if !response.status().is_success() {
-        let message = format!("Download failed for {safe_name}: HTTP {}", response.status());
+        let status = response.status().to_string();
+        let body = response.text().await.unwrap_or_default();
+        let message = file_failure_message(&safe_name, &status, &body);
         emit_progress(&app, &safe_name, existing_bytes, file.size_bytes, true, Some(message.clone()));
         return Err(message);
     }
@@ -227,6 +235,16 @@ pub async fn download_all(manifest: Manifest, destination_dir: PathBuf, app: App
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_failure_message_uses_server_message_or_falls_back() {
+        assert_eq!(
+            file_failure_message("a.jpg", "HTTP 403", r#"{"message":"Locked until paid"}"#),
+            "Locked until paid"
+        );
+        assert_eq!(file_failure_message("a.jpg", "403 Forbidden", "Bad Gateway"), "Download failed for a.jpg: HTTP 403 Forbidden");
+        assert_eq!(file_failure_message("a.jpg", "403 Forbidden", r#"{"message":""}"#), "Download failed for a.jpg: HTTP 403 Forbidden");
+    }
+
     use super::*;
 
     #[test]
