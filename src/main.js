@@ -22,8 +22,14 @@ const editorLoginError = document.getElementById('editor-login-error');
 const editorLoggedInState = document.getElementById('editor-logged-in-state');
 const editorNameEl = document.getElementById('editor-name');
 const editorRoleEl = document.getElementById('editor-role');
+const editorRoleWrapEl = document.getElementById('editor-role-wrap');
+const editorLoginSubmit = document.getElementById('editor-login-submit');
 const editorLogoutLink = document.getElementById('editor-logout-link');
 
+let sessionGeneration = 0; // bumped on login/logout so a late silent refresh can't clobber them
+let editorTokenObtainedAt = 0; // ms timestamp of the current session's access token (login/refresh)
+const EDITOR_TOKEN_MAX_AGE_MS = 6 * 24 * 60 * 60 * 1000; // access token is a 7-day JWT
+let sessionRestore = Promise.resolve(); // replaced by the startup refresh at the bottom of this file
 let currentEditorSession = null; // { photographerId, name, role, accessToken } or null when logged out
 
 const DESTINATION_STORE_KEY = 'destinationDir';
@@ -186,6 +192,7 @@ event.listen('download-progress', (e) => {
 });
 
 async function retryFailedDownloads() {
+  await ensureEditorSessionFresh();
   if (!currentManifest) {
     return;
   }
@@ -345,7 +352,24 @@ async function advanceQueueIfReady() {
   await advanceQueueIfReady();
 }
 
+// Waits for the startup refresh (a cold-launch deep link can arrive while it is in flight), then
+// re-refreshes if the in-memory access token is nearly expired. Concurrent callers share one
+// refresh -- refresh tokens rotate, so two parallel refreshes would invalidate each other.
+async function ensureEditorSessionFresh() {
+  const pending = sessionRestore;
+  await pending;
+  if (sessionRestore !== pending) {
+    await sessionRestore;
+    return;
+  }
+  if (currentEditorSession && Date.now() - editorTokenObtainedAt > EDITOR_TOKEN_MAX_AGE_MS) {
+    sessionRestore = restoreEditorSessionIfAny();
+    await sessionRestore;
+  }
+}
+
 async function startDownload(manifestUrl) {
+  await ensureEditorSessionFresh();
   if (isDownloading) {
     // Fetch the manifest now (not when this job's turn eventually comes) so its name can be
     // shown in the queue status right away, and so its file-level tokens are resolved up front
@@ -353,9 +377,9 @@ async function startDownload(manifestUrl) {
     let manifest;
     try {
       manifest = await core.invoke('fetch_manifest_command', {
-      manifestUrl,
-      accessToken: currentEditorSession?.accessToken ?? null
-    });
+        manifestUrl,
+        accessToken: currentEditorSession?.accessToken ?? null
+      });
     } catch (e) {
       showError(`Could not load the file list for a queued job: ${e}`);
       return;
@@ -411,11 +435,13 @@ function showLoggedOutState() {
 
 function showLoggedInState(session) {
   currentEditorSession = session;
+  editorTokenObtainedAt = Date.now();
   editorLoginLink.hidden = true;
   editorLoginForm.hidden = true;
   editorLoggedInState.hidden = false;
   editorNameEl.textContent = session.name || '';
   editorRoleEl.textContent = session.role || '';
+  editorRoleWrapEl.hidden = !session.role;
 }
 
 editorLoginLink.addEventListener('click', (e) => {
@@ -433,6 +459,7 @@ editorLoginCancel.addEventListener('click', () => {
 editorLoginForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   editorLoginError.hidden = true;
+  editorLoginSubmit.disabled = true;
 
   try {
     const session = await core.invoke('editor_login_command', {
@@ -440,15 +467,19 @@ editorLoginForm.addEventListener('submit', async (e) => {
       password: editorPasswordInput.value
     });
     editorPasswordInput.value = '';
+    sessionGeneration++;
     showLoggedInState(session);
   } catch (err) {
     editorLoginError.textContent = String(err);
     editorLoginError.hidden = false;
+  } finally {
+    editorLoginSubmit.disabled = false;
   }
 });
 
 editorLogoutLink.addEventListener('click', async (e) => {
   e.preventDefault();
+  sessionGeneration++;
   try {
     await core.invoke('editor_logout_command');
   } catch (err) {
@@ -459,8 +490,12 @@ editorLogoutLink.addEventListener('click', async (e) => {
 });
 
 async function restoreEditorSessionIfAny() {
+  const generation = sessionGeneration;
   try {
     const session = await core.invoke('editor_refresh_command');
+    if (generation !== sessionGeneration) {
+      return; // user logged in/out while the refresh was in flight -- theirs wins
+    }
     if (session) {
       // Name/role aren't returned by a silent refresh (see editor_session::refresh) -- keep
       // whatever was already displayed if this is a re-refresh, otherwise show a generic label
@@ -475,10 +510,12 @@ async function restoreEditorSessionIfAny() {
       showLoggedOutState();
     }
   } catch (err) {
-    showLoggedOutState();
+    if (generation === sessionGeneration) {
+      showLoggedOutState();
+    }
   }
 }
 
-restoreEditorSessionIfAny();
+sessionRestore = restoreEditorSessionIfAny();
 
 registerDeepLinkHandler();
