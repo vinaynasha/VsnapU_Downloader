@@ -29,6 +29,22 @@ fn session_file_path(app_data_dir: &PathBuf) -> PathBuf {
 
 const API_BASE_URL: &str = "https://apis.vsnapu.com";
 
+/// Serialises login/refresh/logout so a rotated refresh token can never be written back after a
+/// logout (or a newer login) has already ended/replaced that session.
+fn session_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Auth calls are short; a stalled network must fail promptly (downloads wait on the startup
+/// refresh). A timeout surfaces as a plain send error, which never clears the stored session.
+fn session_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Could not create HTTP client: {e}"))
+}
+
 #[derive(Serialize)]
 struct LoginRequestBody {
     mobile: String,
@@ -111,7 +127,8 @@ fn extract_login_error(status: &str, body: &str) -> String {
 /// desktopRefreshToken from the backend, so login for that role is rejected here rather than
 /// silently storing a session that can never be refreshed past its 7-day access token.
 pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Result<EditorSession, String> {
-    let client = reqwest::Client::new();
+    let _guard = session_lock().lock().await;
+    let client = session_http_client()?;
     let response = client
         .post(format!("{API_BASE_URL}/api/Photographer/Login"))
         .json(&LoginRequestBody { mobile: mobile.to_string(), password: password.to_string(), desktop: true })
@@ -158,11 +175,12 @@ pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Resu
 /// clears the stored state here; other failures (network, 5xx) keep it so a later retry can work.
 /// The JS caller falls back to the logged-out UI on any Err.
 pub async fn refresh(app_data_dir: &PathBuf) -> Result<Option<EditorSession>, String> {
+    let _guard = session_lock().lock().await;
     let Some(stored) = read_stored_refresh_state(app_data_dir) else {
         return Ok(None);
     };
 
-    let client = reqwest::Client::new();
+    let client = session_http_client()?;
     let response = client
         .post(format!("{API_BASE_URL}/api/Photographer/RefreshDesktopToken"))
         .json(&RefreshRequestBody {
@@ -201,8 +219,9 @@ pub async fn refresh(app_data_dir: &PathBuf) -> Result<Option<EditorSession>, St
 }
 
 pub async fn logout(app_data_dir: &PathBuf) -> Result<(), String> {
+    let _guard = session_lock().lock().await;
     if let Some(stored) = read_stored_refresh_state(app_data_dir) {
-        let client = reqwest::Client::new();
+        let client = session_http_client().unwrap_or_default();
         let _ = client
             .post(format!("{API_BASE_URL}/api/Photographer/LogoutDesktop"))
             .json(&LogoutRequestBody { photographer_id: stored.photographer_id, refresh_token: stored.refresh_token })
@@ -301,5 +320,35 @@ mod tests {
         assert_eq!(extract_login_error("400 Bad Request", &long).chars().count(), 200);
         let json_long = serde_json::to_string(&long).unwrap();
         assert_eq!(extract_login_error("400 Bad Request", &json_long).chars().count(), 200);
+    }
+
+    #[test]
+    fn session_http_client_builds() {
+        assert!(session_http_client().is_ok());
+    }
+
+    #[test]
+    fn session_lock_serialises_critical_sections() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        rt.block_on(async {
+            let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let mut handles = Vec::new();
+            for name in ["a", "b"] {
+                let log = log.clone();
+                handles.push(tokio::spawn(async move {
+                    let _guard = session_lock().lock().await;
+                    log.lock().unwrap().push(format!("enter-{name}"));
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    log.lock().unwrap().push(format!("exit-{name}"));
+                }));
+            }
+            for h in handles { h.await.unwrap(); }
+            let log = log.lock().unwrap();
+            assert_eq!(log.len(), 4);
+            assert!(log[0].starts_with("enter-") && log[1].starts_with("exit-"));
+            assert_eq!(log[0][6..], log[1][5..]);
+            assert!(log[2].starts_with("enter-") && log[3].starts_with("exit-"));
+            assert_eq!(log[2][6..], log[3][5..]);
+        });
     }
 }
