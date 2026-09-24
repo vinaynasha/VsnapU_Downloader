@@ -33,6 +33,7 @@ const API_BASE_URL: &str = "https://apis.vsnapu.com";
 struct LoginRequestBody {
     mobile: String,
     password: String,
+    desktop: bool, // backend only returns token/desktopRefreshToken when this is true
 }
 
 #[derive(Deserialize)]
@@ -86,17 +87,21 @@ fn clear_stored_refresh_state(app_data_dir: &PathBuf) {
     let _ = std::fs::remove_file(session_file_path(app_data_dir));
 }
 
+const MAX_LOGIN_ERROR_CHARS: usize = 200;
+
 /// The backend returns login failures as a plain string body (ASP.NET `Unauthorized("...")`), which
-/// arrives as a JSON string; surface that message, else a non-JSON-object raw body, else a fixed fallback.
+/// arrives as a JSON string; surface that message, else a plain-text raw body (never an HTML error
+/// page or JSON blob), else a fixed fallback. Returned messages are capped at 200 characters.
 fn extract_login_error(status: &str, body: &str) -> String {
+    let truncate = |m: &str| m.chars().take(MAX_LOGIN_ERROR_CHARS).collect::<String>();
     if let Ok(message) = serde_json::from_str::<String>(body) {
         if !message.trim().is_empty() {
-            return message;
+            return truncate(&message);
         }
     }
     let raw = body.trim();
-    if !raw.is_empty() && !raw.starts_with('{') && !raw.starts_with('[') {
-        return raw.to_string();
+    if !raw.is_empty() && !raw.starts_with('{') && !raw.starts_with('[') && !raw.starts_with('<') {
+        return truncate(raw);
     }
     format!("Login failed (HTTP {status}). Check your mobile number and password.")
 }
@@ -109,7 +114,7 @@ pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Resu
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{API_BASE_URL}/api/Photographer/Login"))
-        .json(&LoginRequestBody { mobile: mobile.to_string(), password: password.to_string() })
+        .json(&LoginRequestBody { mobile: mobile.to_string(), password: password.to_string(), desktop: true })
         .send()
         .await
         .map_err(|e| format!("Could not reach the login server: {e}"))?;
@@ -148,9 +153,10 @@ pub async fn login(app_data_dir: &PathBuf, mobile: &str, password: &str) -> Resu
 
 /// Called on app startup (and can be re-called near access-token expiry): silently exchanges the
 /// stored refresh token for a fresh access token. Returns None (not an error) when there is no
-/// stored session at all -- that's the ordinary logged-out state, not a failure. Returns Err only
-/// when a session WAS stored but the server rejected it (expired/rotated/deactivated) -- the
-/// caller clears local state in that case so the UI falls back to the logged-out "Login" link.
+/// stored session at all -- that's the ordinary logged-out state, not a failure. Returns Err when a
+/// session WAS stored but refresh failed. Only a 401/403 rejection (expired/rotated/deactivated)
+/// clears the stored state here; other failures (network, 5xx) keep it so a later retry can work.
+/// The JS caller falls back to the logged-out UI on any Err.
 pub async fn refresh(app_data_dir: &PathBuf) -> Result<Option<EditorSession>, String> {
     let Some(stored) = read_stored_refresh_state(app_data_dir) else {
         return Ok(None);
@@ -267,5 +273,33 @@ mod tests {
         let expected = "Login failed (HTTP 500 Internal Server Error). Check your mobile number and password.";
         assert_eq!(extract_login_error("500 Internal Server Error", ""), expected);
         assert_eq!(extract_login_error("500 Internal Server Error", "{\"title\":\"x\"}"), expected);
+    }
+
+    #[test]
+    fn login_request_body_sends_desktop_flag() {
+        let json = serde_json::to_string(&LoginRequestBody {
+            mobile: "9".to_string(),
+            password: "p".to_string(),
+            desktop: true,
+        })
+        .unwrap();
+        assert!(json.contains("\"desktop\":true"));
+        assert!(json.contains("\"mobile\""));
+        assert!(json.contains("\"password\""));
+    }
+
+    #[test]
+    fn extract_login_error_rejects_html_bodies() {
+        let expected = "Login failed (HTTP 502 Bad Gateway). Check your mobile number and password.";
+        assert_eq!(extract_login_error("502 Bad Gateway", "<html><body>oops</body></html>"), expected);
+        assert_eq!(extract_login_error("502 Bad Gateway", "  <!DOCTYPE html><html></html>"), expected);
+    }
+
+    #[test]
+    fn extract_login_error_truncates_long_messages() {
+        let long = "a".repeat(500);
+        assert_eq!(extract_login_error("400 Bad Request", &long).chars().count(), 200);
+        let json_long = serde_json::to_string(&long).unwrap();
+        assert_eq!(extract_login_error("400 Bad Request", &json_long).chars().count(), 200);
     }
 }
