@@ -77,6 +77,11 @@ body {
   margin-left: auto;
 }
 
+/* Without this, the display:flex above beats the browser's built-in [hidden] rule. */
+.update-banner[hidden] {
+  display: none;
+}
+
 .update-blocking {
   padding: 16px;
   margin: 12px 0;
