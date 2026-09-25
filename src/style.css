@@ -60,3 +60,33 @@ body {
   display: block;
   margin-bottom: 0.5rem;
 }
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fff4d6;
+  border: 1px solid #e0b64a;
+  border-radius: 4px;
+}
+
+.update-banner a {
+  margin-left: auto;
+}
+
+.update-blocking {
+  padding: 16px;
+  margin: 12px 0;
+  border: 2px solid #b00020;
+  border-radius: 4px;
+}
+
+/* While an update is mandatory, the whole download UI is replaced by the blocking screen. */
+body.update-blocked #idle-state,
+body.update-blocked #editor-session-area,
+body.update-blocked #job-state {
+  display: none !important;
+}

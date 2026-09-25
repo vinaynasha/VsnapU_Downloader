@@ -25,6 +25,14 @@ const editorRoleEl = document.getElementById('editor-role');
 const editorRoleWrapEl = document.getElementById('editor-role-wrap');
 const editorLoginSubmit = document.getElementById('editor-login-submit');
 const editorLogoutLink = document.getElementById('editor-logout-link');
+const updateBanner = document.getElementById('update-banner');
+const updateBannerText = document.getElementById('update-banner-text');
+const updateBannerNow = document.getElementById('update-banner-now');
+const updateBannerLater = document.getElementById('update-banner-later');
+const updateBlocking = document.getElementById('update-blocking');
+const updateBlockingVersion = document.getElementById('update-blocking-version');
+const updateBlockingNow = document.getElementById('update-blocking-now');
+const updateErrorEl = document.getElementById('update-error');
 
 let sessionGeneration = 0; // bumped on login/logout so a late silent refresh can't clobber them
 let editorTokenObtainedAt = 0; // ms timestamp of the current session's access token (login/refresh)
@@ -382,7 +390,91 @@ async function ensureEditorSessionFresh() {
   }
 }
 
+const UPDATE_CHECK_MIN_INTERVAL_MS = 60 * 60 * 1000; // at most one check per hour
+const UPDATE_WAIT_MAX_MS = 3000; // a starting download never waits longer than this for a check
+let lastUpdateCheckAt = 0;
+let updateCheckInFlight = null;
+let updateBannerDismissed = false; // "Later" -- lasts until the app is relaunched
+let currentUpdate = { status: 'none', latestVersion: '', installerUrl: '' };
+
+function applyUpdateResult(result) {
+  currentUpdate = result;
+  const blocking = result.status === 'blocking';
+  document.body.classList.toggle('update-blocked', blocking);
+  updateBlocking.hidden = !blocking;
+
+  if (blocking) {
+    updateBlockingVersion.textContent = `Latest version: v${result.latestVersion}`;
+    updateBanner.hidden = true;
+    return;
+  }
+
+  const showBanner = result.status === 'banner' && !updateBannerDismissed;
+  updateBanner.hidden = !showBanner;
+  if (showBanner) {
+    updateBannerText.textContent = `A new version (v${result.latestVersion}) is available. Please update now.`;
+  }
+}
+
+async function runUpdateCheck() {
+  try {
+    const result = await core.invoke('check_for_update_command');
+    lastUpdateCheckAt = Date.now();
+    applyUpdateResult(result);
+  } catch (e) {
+    // Silent by design: a failed check must never show an error or get in the way of downloads.
+  }
+}
+
+// Throttled: returns the in-flight check if one is running, a resolved promise if the last successful
+// check was under an hour ago, otherwise starts a new one.
+function checkForUpdate() {
+  if (updateCheckInFlight) {
+    return updateCheckInFlight;
+  }
+  if (lastUpdateCheckAt && Date.now() - lastUpdateCheckAt < UPDATE_CHECK_MIN_INTERVAL_MS) {
+    return Promise.resolve();
+  }
+  updateCheckInFlight = runUpdateCheck().finally(() => {
+    updateCheckInFlight = null;
+  });
+  return updateCheckInFlight;
+}
+
+async function waitForUpdateCheck() {
+  await Promise.race([
+    checkForUpdate(),
+    new Promise((resolve) => setTimeout(resolve, UPDATE_WAIT_MAX_MS))
+  ]);
+}
+
+async function openUpdateLink() {
+  if (!currentUpdate.installerUrl) {
+    return;
+  }
+  updateErrorEl.hidden = true;
+  try {
+    await core.invoke('open_update_url_command', { url: currentUpdate.installerUrl });
+  } catch (e) {
+    updateErrorEl.textContent = String(e);
+    updateErrorEl.hidden = false;
+  }
+}
+
+updateBannerNow.addEventListener('click', openUpdateLink);
+updateBlockingNow.addEventListener('click', openUpdateLink);
+updateBannerLater.addEventListener('click', (e) => {
+  e.preventDefault();
+  updateBannerDismissed = true;
+  updateBanner.hidden = true;
+});
+
 async function startDownload(manifestUrl) {
+  await waitForUpdateCheck();
+  if (currentUpdate.status === 'blocking') {
+    // The blocking screen is already showing; a mandatory update means no new downloads.
+    return;
+  }
   await ensureEditorSessionFresh();
   if (isDownloading) {
     // Fetch the manifest now (not when this job's turn eventually comes) so its name can be
@@ -532,4 +624,5 @@ async function restoreEditorSessionIfAny() {
 
 sessionRestore = restoreEditorSessionIfAny();
 
+checkForUpdate();
 registerDeepLinkHandler();
