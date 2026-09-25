@@ -1,3 +1,4 @@
+use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -141,6 +142,44 @@ pub fn evaluate(current_version: &str, os: &str, release: &Release) -> UpdateChe
         status,
         latest_version: format!("{}.{}.{}", latest.0, latest.1, latest.2),
         installer_url,
+    }
+}
+
+const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/vinaynasha/VsnapU_Downloader/releases/latest";
+
+/// Fetches and parses GitHub's latest published (non-draft) release. Returns Err with a plain
+/// description on any failure; callers treat every Err as "no update", never as something to show.
+pub async fn fetch_latest_release() -> Result<Release, String> {
+    // GitHub's API rejects requests without a User-Agent. The short timeout keeps an offline or slow
+    // network from ever holding the UI up.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent("VSnapU-Downloader-UpdateCheck")
+        .build()
+        .map_err(|e| format!("could not build the HTTP client: {e}"))?;
+
+    let response = client
+        .get(LATEST_RELEASE_URL)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("could not reach GitHub: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("GitHub answered HTTP {}", response.status()));
+    }
+
+    response
+        .json::<Release>()
+        .await
+        .map_err(|e| format!("unexpected release payload: {e}"))
+}
+
+/// The whole check: fetch, evaluate, and swallow every failure into the "none" result.
+pub async fn check_for_update(current_version: &str, os: &str) -> UpdateCheckResult {
+    match fetch_latest_release().await {
+        Ok(release) => evaluate(current_version, os, &release),
+        Err(_) => UpdateCheckResult::none(),
     }
 }
 
@@ -373,5 +412,17 @@ mod tests {
         assert_eq!(json["status"], "banner");
         assert_eq!(json["latestVersion"], "0.1.6");
         assert!(json["installerUrl"].as_str().unwrap().ends_with(".msi"));
+    }
+
+    // Hits the real GitHub API, so it is ignored by default. Run it explicitly with:
+    //   cargo test live_latest_release_payload -- --ignored
+    // It proves the `Release` struct really deserialises GitHub's payload.
+    #[tokio::test]
+    #[ignore]
+    async fn live_latest_release_payload_deserializes() {
+        let result = fetch_latest_release().await;
+        let release = result.expect("GitHub's latest-release payload should deserialise");
+        assert!(parse_version(&release.tag_name).is_some(), "tag_name {:?} should parse", release.tag_name);
+        assert!(!release.assets.is_empty(), "the latest published release should have installer assets");
     }
 }

@@ -35,6 +35,26 @@ async fn editor_logout_command(app: AppHandle) -> Result<(), String> {
     editor_session::logout(&app_data_dir).await
 }
 
+#[tauri::command]
+async fn check_for_update_command(app: AppHandle) -> update_check::UpdateCheckResult {
+    let current_version = app.package_info().version.to_string();
+    update_check::check_for_update(&current_version, std::env::consts::OS).await
+}
+
+#[tauri::command]
+fn open_update_url_command(url: String, app: AppHandle) -> Result<(), String> {
+    // The URL comes back from the webview, so never trust it blindly: only our own repo's pages and
+    // release assets may be opened.
+    if !update_check::is_allowed_update_url(&url) {
+        return Err("Refusing to open an unexpected update link.".to_string());
+    }
+
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("Could not open the download page: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -51,12 +71,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             fetch_manifest_command,
             download_all_command,
             editor_login_command,
             editor_refresh_command,
-            editor_logout_command
+            editor_logout_command,
+            check_for_update_command,
+            open_update_url_command
         ])
         .setup(|app| {
             use tauri_plugin_deep_link::DeepLinkExt;
