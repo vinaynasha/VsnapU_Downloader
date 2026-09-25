@@ -78,6 +78,11 @@ body {
 }
 
 /* Without this, the display:flex above beats the browser's built-in [hidden] rule. */
+#update-banner-hint {
+  flex-basis: 100%;
+  color: #555;
+}
+
 .update-banner[hidden] {
   display: none;
 }

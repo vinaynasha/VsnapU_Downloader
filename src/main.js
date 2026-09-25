@@ -357,6 +357,15 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
 // if it has any failed files, the queue stays paused so a "Retry Failed Downloads" click doesn't
 // get raced by the next job silently taking over the UI first.
 async function advanceQueueIfReady() {
+  if (currentUpdate.status === 'blocking') {
+    // A mandatory update appeared mid-session: stop chaining into queued jobs (the running job is
+    // allowed to finish, but nothing new starts while the blocking screen is up).
+    jobQueue = [];
+    isDownloading = false;
+    updateQueueStatus();
+    return;
+  }
+
   if (hasAnyFailures()) {
     updateQueueStatus();
     return;
