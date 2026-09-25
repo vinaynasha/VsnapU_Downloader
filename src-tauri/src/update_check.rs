@@ -86,7 +86,14 @@ pub fn decide(current: Version, latest: Version, min_version: Option<Version>) -
 }
 
 pub fn is_allowed_update_url(url: &str) -> bool {
+    // Real GitHub release/asset URLs never contain dot segments (literal or percent-encoded),
+    // backslashes, whitespace or control characters; rejecting them stops a prefix-matching URL from
+    // being resolved by the browser/OS to a different github.com path.
     url.starts_with(ALLOWED_URL_PREFIX)
+        && !url.contains("..")
+        && !url.to_ascii_lowercase().contains("%2e")
+        && !url.contains('\\')
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 pub fn pick_installer_url(release: &Release, os: &str) -> String {
@@ -319,6 +326,18 @@ mod tests {
         assert!(!is_allowed_update_url("https://github.com.evil.com/vinaynasha/VsnapU_Downloader/x"));
         assert!(!is_allowed_update_url("https://evil.com/?https://github.com/vinaynasha/VsnapU_Downloader/"));
         assert!(!is_allowed_update_url(""));
+    }
+
+    #[test]
+    fn urls_that_could_escape_the_repo_path_are_rejected() {
+        let base = "https://github.com/vinaynasha/VsnapU_Downloader/";
+        assert!(!is_allowed_update_url(&format!("{base}../../evil/x")));
+        assert!(!is_allowed_update_url(&format!("{base}%2E%2e/evil")));
+        assert!(!is_allowed_update_url(&format!("{base}%2e/evil")));
+        assert!(!is_allowed_update_url(&format!("{base}a\\b")));
+        assert!(!is_allowed_update_url(&format!("{base}a b")));
+        assert!(!is_allowed_update_url(&format!("{base}a\tb")));
+        assert!(!is_allowed_update_url(&format!("{base}a\nb")));
     }
 
     // ---- pick_installer_url ----
