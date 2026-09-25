@@ -399,6 +399,7 @@ let currentUpdate = { status: 'none', latestVersion: '', installerUrl: '' };
 
 function applyUpdateResult(result) {
   currentUpdate = result;
+  updateErrorEl.hidden = true;
   const blocking = result.status === 'blocking';
   document.body.classList.toggle('update-blocked', blocking);
   updateBlocking.hidden = !blocking;
@@ -422,12 +423,13 @@ async function runUpdateCheck() {
     lastUpdateCheckAt = Date.now();
     applyUpdateResult(result);
   } catch (e) {
-    // Silent by design: a failed check must never show an error or get in the way of downloads.
+    // Silent by design: a failed check (the command rejects) must never show an error or get in the way
+    // of downloads. The previous state is kept and the hourly throttle is not stamped, so it is retried.
   }
 }
 
 // Throttled: returns the in-flight check if one is running, a resolved promise if the last successful
-// check was under an hour ago, otherwise starts a new one.
+// check was under an hour ago (a failed check does not stamp the throttle), otherwise starts a new one.
 function checkForUpdate() {
   if (updateCheckInFlight) {
     return updateCheckInFlight;

@@ -36,7 +36,7 @@ async fn editor_logout_command(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_for_update_command(app: AppHandle) -> update_check::UpdateCheckResult {
+async fn check_for_update_command(app: AppHandle) -> Result<update_check::UpdateCheckResult, String> {
     let current_version = app.package_info().version.to_string();
     update_check::check_for_update(&current_version, std::env::consts::OS).await
 }

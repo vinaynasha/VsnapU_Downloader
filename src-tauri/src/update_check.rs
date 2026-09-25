@@ -155,7 +155,7 @@ pub fn evaluate(current_version: &str, os: &str, release: &Release) -> UpdateChe
 const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/vinaynasha/VsnapU_Downloader/releases/latest";
 
 /// Fetches and parses GitHub's latest published (non-draft) release. Returns Err with a plain
-/// description on any failure; callers treat every Err as "no update", never as something to show.
+/// description on any failure; the UI never shows these; it just keeps its previous state and retries later.
 pub async fn fetch_latest_release() -> Result<Release, String> {
     // GitHub's API rejects requests without a User-Agent. The short timeout keeps an offline or slow
     // network from ever holding the UI up.
@@ -182,12 +182,12 @@ pub async fn fetch_latest_release() -> Result<Release, String> {
         .map_err(|e| format!("unexpected release payload: {e}"))
 }
 
-/// The whole check: fetch, evaluate, and swallow every failure into the "none" result.
-pub async fn check_for_update(current_version: &str, os: &str) -> UpdateCheckResult {
-    match fetch_latest_release().await {
-        Ok(release) => evaluate(current_version, os, &release),
-        Err(_) => UpdateCheckResult::none(),
-    }
+/// The whole check: fetch, then evaluate. Err only when the fetch itself fails (offline, rate limit,
+/// bad payload), so callers can tell "could not check" apart from a genuine `none` result and keep
+/// their previous state instead of treating the failure as "no update".
+pub async fn check_for_update(current_version: &str, os: &str) -> Result<UpdateCheckResult, String> {
+    let release = fetch_latest_release().await?;
+    Ok(evaluate(current_version, os, &release))
 }
 
 #[cfg(test)]
