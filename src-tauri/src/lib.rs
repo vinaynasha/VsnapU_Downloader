@@ -1,6 +1,7 @@
 mod download;
 mod editor_session;
 mod manifest;
+mod update_check;
 
 use manifest::Manifest;
 use std::path::PathBuf;
