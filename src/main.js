@@ -1,4 +1,4 @@
-const { core, event, dialog, store } = window.__TAURI__;
+const { core, event, dialog, store, app } = window.__TAURI__;
 
 const idleState = document.getElementById('idle-state');
 const jobState = document.getElementById('job-state');
@@ -33,6 +33,7 @@ const updateBlocking = document.getElementById('update-blocking');
 const updateBlockingVersion = document.getElementById('update-blocking-version');
 const updateBlockingNow = document.getElementById('update-blocking-now');
 const updateErrorEl = document.getElementById('update-error');
+const appVersionEl = document.getElementById('app-version');
 const downloadLocationPathEl = document.getElementById('download-location-path');
 const downloadLocationChangeButton = document.getElementById('download-location-change');
 const downloadLocationHintEl = document.getElementById('download-location-hint');
@@ -696,6 +697,11 @@ async function restoreEditorSessionIfAny() {
 }
 
 sessionRestore = restoreEditorSessionIfAny();
+
+// Shown next to the title so users can tell us (and the update banner) which version they run.
+app.getVersion()
+  .then((version) => { appVersionEl.textContent = `v${version}`; })
+  .catch(() => { /* cosmetic only -- leave the version blank rather than show an error */ });
 
 renderDownloadLocation();
 checkForUpdate();
