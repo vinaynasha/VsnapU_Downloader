@@ -37,7 +37,8 @@ proxy for files still on the server's local drives. Both kinds are short-lived a
 
 - Fixed concurrency of 4 simultaneous file downloads (`src-tauri/src/download.rs`).
 - Each file streams straight to its final destination path (chosen by the user on first run,
-  remembered via `tauri-plugin-store`) -- no zip, no temp merge step.
+  remembered via `tauri-plugin-store`, and changeable any time from the "Download location" row --
+  locked while files are downloading) -- no zip, no temp merge step.
 - HTTP Range requests resume a partially-downloaded file rather than restarting it.
 - Progress is reported per-file and as an overall job total, using the manifest's `sizeBytes`.
 

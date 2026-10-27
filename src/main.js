@@ -33,6 +33,10 @@ const updateBlocking = document.getElementById('update-blocking');
 const updateBlockingVersion = document.getElementById('update-blocking-version');
 const updateBlockingNow = document.getElementById('update-blocking-now');
 const updateErrorEl = document.getElementById('update-error');
+const downloadLocationPathEl = document.getElementById('download-location-path');
+const downloadLocationChangeButton = document.getElementById('download-location-change');
+const downloadLocationHintEl = document.getElementById('download-location-hint');
+const downloadLocationErrorEl = document.getElementById('download-location-error');
 
 let sessionGeneration = 0; // bumped on login/logout so a late silent refresh can't clobber them
 let editorTokenObtainedAt = 0; // ms timestamp of the current session's access token (login/refresh)
@@ -74,8 +78,66 @@ async function resolveDestinationDir() {
 
   await settings.set(DESTINATION_STORE_KEY, chosen);
   await settings.save();
+  renderDownloadLocation();
   return chosen;
 }
+
+// Files being written right now go to the folder the job started with; changing it mid-download would
+// split one job across two folders, so the Change button is locked until every in-flight batch settles.
+let downloadsInFlight = 0;
+
+async function invokeDownloadAll(args) {
+  downloadsInFlight += 1;
+  renderDownloadLocation();
+  try {
+    return await core.invoke('download_all_command', args);
+  } finally {
+    downloadsInFlight -= 1;
+    renderDownloadLocation();
+  }
+}
+
+async function renderDownloadLocation() {
+  const locked = downloadsInFlight > 0;
+  downloadLocationChangeButton.disabled = locked;
+  downloadLocationHintEl.hidden = !locked;
+  try {
+    const settings = await getDestinationStore();
+    const current = await settings.get(DESTINATION_STORE_KEY);
+    downloadLocationPathEl.textContent = current || 'Not chosen yet -- you will be asked when the first download starts';
+    downloadLocationPathEl.title = current || '';
+    downloadLocationChangeButton.textContent = current ? 'Change...' : 'Choose...';
+  } catch (e) {
+    downloadLocationPathEl.textContent = 'Unknown';
+  }
+}
+
+async function changeDownloadLocation() {
+  if (downloadsInFlight > 0) {
+    return;
+  }
+  downloadLocationErrorEl.hidden = true;
+  try {
+    const settings = await getDestinationStore();
+    const current = await settings.get(DESTINATION_STORE_KEY);
+    const chosen = await dialog.open({
+      directory: true,
+      title: 'Choose a folder to save downloads to',
+      defaultPath: current || undefined
+    });
+    if (!chosen) {
+      return; // dialog cancelled -- keep the current location
+    }
+    await settings.set(DESTINATION_STORE_KEY, chosen);
+    await settings.save();
+  } catch (e) {
+    downloadLocationErrorEl.textContent = `Could not change the download location: ${e}`;
+    downloadLocationErrorEl.hidden = false;
+  }
+  renderDownloadLocation();
+}
+
+downloadLocationChangeButton.addEventListener('click', changeDownloadLocation);
 
 function showError(message) {
   errorMessageEl.textContent = message;
@@ -258,7 +320,7 @@ async function retryFailedDownloads() {
     };
 
     try {
-      await core.invoke('download_all_command', {
+      await invokeDownloadAll({
         manifest: retryManifest,
         destinationDir,
         accessToken: currentEditorSession?.accessToken ?? null
@@ -330,7 +392,7 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
   }
 
   try {
-    await core.invoke('download_all_command', {
+    await invokeDownloadAll({
       manifest: currentManifest,
       destinationDir,
       accessToken: currentEditorSession?.accessToken ?? null
@@ -635,5 +697,6 @@ async function restoreEditorSessionIfAny() {
 
 sessionRestore = restoreEditorSessionIfAny();
 
+renderDownloadLocation();
 checkForUpdate();
 registerDeepLinkHandler();
