@@ -109,9 +109,10 @@ async fn download_one_file(
     };
 
     if !response.status().is_success() {
+        let status_code = response.status().as_u16();
         let status = response.status().to_string();
         let body = response.text().await.unwrap_or_default();
-        let message = file_failure_message(&safe_name, &status, &body);
+        let message = crate::manifest::tag_if_token_rejected(status_code, &body, file_failure_message(&safe_name, &status, &body));
         emit_progress(&app, &safe_name, existing_bytes, file.size_bytes, true, Some(message.clone()));
         return Err(message);
     }

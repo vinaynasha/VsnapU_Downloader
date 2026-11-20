@@ -21,6 +21,30 @@ pub struct Manifest {
 #[derive(Deserialize)]
 struct ErrorBody {
     message: Option<String>,
+    code: Option<String>,
+}
+
+/// Prefix on an error string meaning "the server rejected the editor token we sent" (expired or
+/// signed with a rotated key). The front end renews the token and retries once when it sees this.
+pub const TOKEN_REJECTED_PREFIX: &str = "TOKEN_REJECTED:";
+
+/// True when the server answered 401 with `{ "code": "token_rejected" }` -- its way of saying the
+/// Bearer token was not accepted. A plain 401 (expired/invalid manifest link) is NOT this.
+pub(crate) fn is_token_rejected(status_code: u16, body: &str) -> bool {
+    status_code == 401
+        && serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .and_then(|b| b.code)
+            .is_some_and(|c| c == "token_rejected")
+}
+
+/// `message` prefixed with [`TOKEN_REJECTED_PREFIX`] when the response is a token rejection.
+pub(crate) fn tag_if_token_rejected(status_code: u16, body: &str, message: String) -> String {
+    if is_token_rejected(status_code, body) {
+        format!("{TOKEN_REJECTED_PREFIX}{message}")
+    } else {
+        message
+    }
 }
 
 /// The non-blank `message` field of a `{ "message": "..." }` error body, or None when the body
@@ -61,9 +85,10 @@ pub async fn fetch_manifest(manifest_url: &str, access_token: Option<&str>) -> R
         .map_err(|e| format!("Failed to reach the manifest link: {e}"))?;
 
     if !response.status().is_success() {
+        let status_code = response.status().as_u16();
         let status = response.status().to_string();
         let body = response.text().await.unwrap_or_default();
-        return Err(extract_error_message(&status, &body));
+        return Err(tag_if_token_rejected(status_code, &body, extract_error_message(&status, &body)));
     }
 
     response
@@ -116,6 +141,23 @@ mod tests {
         assert_eq!(parse_error_message(r#"{"message":" "}"#), None);
         assert_eq!(parse_error_message("Bad Gateway"), None);
         assert_eq!(parse_error_message(r#"{"other":1}"#), None);
+    }
+
+    #[test]
+    fn is_token_rejected_only_for_401_with_token_rejected_code() {
+        let body = r#"{"code":"token_rejected","message":"Your editor session has expired."}"#;
+        assert!(is_token_rejected(401, body));
+        assert!(!is_token_rejected(403, body));
+        assert!(!is_token_rejected(401, ""));
+        assert!(!is_token_rejected(401, r#"{"message":"locked"}"#));
+        assert!(!is_token_rejected(401, "not json"));
+    }
+
+    #[test]
+    fn tag_if_token_rejected_prefixes_only_rejections() {
+        let body = r#"{"code":"token_rejected"}"#;
+        assert_eq!(tag_if_token_rejected(401, body, "x".to_string()), "TOKEN_REJECTED:x");
+        assert_eq!(tag_if_token_rejected(403, body, "x".to_string()), "x");
     }
 
     #[test]

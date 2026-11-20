@@ -87,11 +87,70 @@ async function resolveDestinationDir() {
 // split one job across two folders, so the Change button is locked until every in-flight batch settles.
 let downloadsInFlight = 0;
 
+const TOKEN_REJECTED_PREFIX = 'TOKEN_REJECTED:';
+const SESSION_EXPIRED_MESSAGE = 'Your editor session has expired. Please sign in again.';
+
+function isTokenRejected(err) {
+  return String(err).includes(TOKEN_REJECTED_PREFIX);
+}
+
+// Error text for display: drops the internal marker the Rust side adds to token rejections.
+function cleanError(err) {
+  return String(err).replace(TOKEN_REJECTED_PREFIX, '');
+}
+
+// Runs `run` (which must read the access token fresh each call). If the server rejects the editor
+// token, renews it once through the stored refresh token and runs `run` again; if renewal is not
+// possible the user is told to sign in again. `beforeRetry` lets the caller reset UI state.
+async function withTokenRenewal(run, beforeRetry) {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isTokenRejected(err) || !currentEditorSession) {
+      throw new Error(cleanError(err));
+    }
+    sessionRestore = restoreEditorSessionIfAny();
+    await sessionRestore;
+    if (!currentEditorSession) {
+      throw new Error(SESSION_EXPIRED_MESSAGE);
+    }
+    if (beforeRetry) {
+      beforeRetry();
+    }
+    try {
+      return await run();
+    } catch (retryErr) {
+      throw new Error(isTokenRejected(retryErr) ? SESSION_EXPIRED_MESSAGE : cleanError(retryErr));
+    }
+  }
+}
+
+function fetchManifestWithRenewal(manifestUrl) {
+  return withTokenRenewal(() => core.invoke('fetch_manifest_command', {
+    manifestUrl,
+    accessToken: currentEditorSession?.accessToken ?? null
+  }));
+}
+
 async function invokeDownloadAll(args) {
   downloadsInFlight += 1;
   renderDownloadLocation();
   try {
-    return await core.invoke('download_all_command', args);
+    // Files already completed are skipped and partial ones resume, so re-running the whole batch
+    // after a token renewal only fetches what is still missing.
+    return await withTokenRenewal(
+      () => core.invoke('download_all_command', { ...args, accessToken: currentEditorSession?.accessToken ?? null }),
+      () => {
+        for (const entry of fileProgressByName.values()) {
+          if (entry.failed) {
+            entry.failed = false;
+            entry.done = false;
+          }
+        }
+        errorMessageEl.hidden = true;
+        updateFileCountAndRetryUi();
+      }
+    );
   } finally {
     downloadsInFlight -= 1;
     renderDownloadLocation();
@@ -255,7 +314,10 @@ event.listen('download-progress', (e) => {
   entry.element.value = bytesDownloaded;
 
   if (error) {
-    showError(`${fileName}: ${error}`);
+    // A token-rejected file error is renewed and retried by invokeDownloadAll; stay quiet for it.
+    if (!isTokenRejected(error)) {
+      showError(`${fileName}: ${cleanError(error)}`);
+    }
   }
 
   updateOverallProgress();
@@ -370,10 +432,7 @@ async function runDownloadJob(manifestUrl, prefetchedManifest) {
     currentManifest = prefetchedManifest;
   } else {
     try {
-      currentManifest = await core.invoke('fetch_manifest_command', {
-        manifestUrl,
-        accessToken: currentEditorSession?.accessToken ?? null
-      });
+      currentManifest = await fetchManifestWithRenewal(manifestUrl);
     } catch (e) {
       showError(`Could not load the file list: ${e}`);
       return;
@@ -556,10 +615,7 @@ async function startDownload(manifestUrl) {
     // rather than only once the job actually starts downloading.
     let manifest;
     try {
-      manifest = await core.invoke('fetch_manifest_command', {
-        manifestUrl,
-        accessToken: currentEditorSession?.accessToken ?? null
-      });
+      manifest = await fetchManifestWithRenewal(manifestUrl);
     } catch (e) {
       showError(`Could not load the file list for a queued job: ${e}`);
       return;
